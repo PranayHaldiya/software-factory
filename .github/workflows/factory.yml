@@ -1,0 +1,175 @@
+name: Factory
+
+# Hand an issue to the factory by adding the `factory` label.
+# Stations so far: triage, then implement and open a draft pull request.
+
+on:
+  issues:
+    types: [labeled]
+
+concurrency:
+  group: factory-issue-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  triage:
+    # Only the repository owner can hand work to the factory: they must have
+    # written the issue and applied the label. Issue text from anyone else
+    # never reaches a station.
+    if: >-
+      github.event.label.name == 'factory' &&
+      github.event.sender.login == github.repository_owner &&
+      github.event.issue.user.login == github.repository_owner
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: read
+      id-token: write
+    outputs:
+      result: ${{ steps.triage.outputs.structured_output }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Write the work item
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ github.event.issue.number }}
+          OWNER: ${{ github.repository_owner }}
+          OUT: ${{ runner.temp }}/factory
+        run: |
+          mkdir -p "$OUT"
+          gh issue view "$ISSUE" --repo "$GITHUB_REPOSITORY" --json number,title,body,comments |
+            jq -r --arg owner "$OWNER" '
+              "# Issue #\(.number): \(.title)\n\n\(.body // "")\n\n## Comments from the owner\n\n"
+              + ([.comments[] | select(.author.login == $owner) | "- \(.body)"] | join("\n"))
+            ' > "$OUT/issue.md"
+
+      - name: Triage
+        id: triage
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            You are the triage station of a software factory working on the repository ${{ github.repository }}.
+            Follow the instructions in stations/triage.md.
+            The work item is in ${{ runner.temp }}/factory/issue.md.
+          claude_args: >-
+            --model sonnet
+            --max-turns 20
+            --add-dir ${{ runner.temp }}/factory
+            --allowedTools "Read,Glob,Grep"
+            --json-schema '{"type":"object","properties":{"actionable":{"type":"boolean"},"kind":{"type":"string","enum":["bug","feature","refactor","docs","chore","question"]},"size":{"type":"string","enum":["small","medium","large"]},"summary":{"type":"string"},"acceptance_criteria":{"type":"array","items":{"type":"string"}},"questions":{"type":"array","items":{"type":"string"}}},"required":["actionable","kind","size","summary","acceptance_criteria","questions"]}'
+
+  ask:
+    needs: triage
+    if: >-
+      !fromJSON(needs.triage.outputs.result).actionable ||
+      fromJSON(needs.triage.outputs.result).size == 'large'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Ask for what is missing
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ github.event.issue.number }}
+          RESULT: ${{ needs.triage.outputs.result }}
+        run: |
+          body=$(jq -r '
+            if .actionable then
+              "This is too large for one pull request. Could you split it into smaller issues?\n\n> \(.summary)"
+            else
+              "Before I start, I need a few answers:\n\n" + ([.questions[] | "- \(.)"] | join("\n"))
+              + "\n\nReply here, then add the `factory` label again."
+            end' <<<"$RESULT")
+          gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body "$body"
+          gh issue edit "$ISSUE" --repo "$GITHUB_REPOSITORY" --remove-label factory --add-label factory:needs-info
+
+  implement:
+    needs: triage
+    if: >-
+      fromJSON(needs.triage.outputs.result).actionable &&
+      fromJSON(needs.triage.outputs.result).size != 'large'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+    env:
+      BRANCH: factory/issue-${{ github.event.issue.number }}
+      ISSUE: ${{ github.event.issue.number }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Write the work item and the triage result
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+          OUT: ${{ runner.temp }}/factory
+          RESULT: ${{ needs.triage.outputs.result }}
+        run: |
+          mkdir -p "$OUT"
+          gh issue view "$ISSUE" --repo "$GITHUB_REPOSITORY" --json number,title,body,comments |
+            jq -r --arg owner "$OWNER" '
+              "# Issue #\(.number): \(.title)\n\n\(.body // "")\n\n## Comments from the owner\n\n"
+              + ([.comments[] | select(.author.login == $owner) | "- \(.body)"] | join("\n"))
+            ' > "$OUT/issue.md"
+          jq . <<<"$RESULT" > "$OUT/triage.json"
+
+      - name: Repository setup
+        run: |
+          if [ -x .github/factory-setup.sh ]; then
+            .github/factory-setup.sh
+          fi
+
+      - name: Implement
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            You are the implementer station of a software factory working on the repository ${{ github.repository }}.
+            Follow the instructions in stations/implement.md.
+            The work item is in ${{ runner.temp }}/factory/issue.md and the triage result is in ${{ runner.temp }}/factory/triage.json.
+            Work on the branch ${{ env.BRANCH }}, based on ${{ github.event.repository.default_branch }}. The issue number is ${{ env.ISSUE }}.
+          claude_args: >-
+            --model opus
+            --max-turns 100
+            --add-dir ${{ runner.temp }}/factory
+            --allowedTools "Read,Edit,Write,Glob,Grep,Bash(git:*),Bash(gh pr create:*),Bash(gh pr view:*),Bash(npm:*),Bash(npx:*),Bash(pnpm:*),Bash(yarn:*),Bash(bun:*),Bash(node:*),Bash(python3:*),Bash(pytest:*),Bash(make:*),Bash(actionlint:*),Bash(jq:*),Bash(ls:*),Bash(mkdir:*)"
+
+      - name: Confirm the pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          url=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --state open --json url --jq '.[0].url // empty')
+          if [ -z "$url" ]; then
+            echo "::error::No pull request was opened from $BRANCH."
+            exit 1
+          fi
+          gh issue edit "$ISSUE" --repo "$GITHUB_REPOSITORY" --remove-label factory --add-label factory:pr-open
+          echo "Draft pull request: $url" >> "$GITHUB_STEP_SUMMARY"
+
+  report-failure:
+    needs: [triage, ask, implement]
+    if: failure()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Tell the issue what happened
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ github.event.issue.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body "The factory stopped on this issue. Run log: $RUN_URL"
+          gh issue edit "$ISSUE" --repo "$GITHUB_REPOSITORY" --remove-label factory --add-label factory:failed
