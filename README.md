@@ -43,6 +43,8 @@ issue labeled "factory"
 
 Running `/install-github-app` inside Claude Code does steps 1 and 2 for you.
 
+To hand work to the factory, open an issue with the "Factory task" form (`.github/ISSUE_TEMPLATE/factory-task.yml`). It asks what should change, why, and how we'll know it's done, and applies the `factory` label for you. Blank issues are still allowed.
+
 If a station fails without a clear reason, set the repository variable `FACTORY_DEBUG` to `1` (`gh variable set FACTORY_DEBUG --body 1`) to print Claude's full output in the run log. Turn it off afterwards: the log then includes tool output.
 
 Mention `@claude` in any issue or pull request comment for one-off questions and changes (`.github/workflows/claude.yml`).

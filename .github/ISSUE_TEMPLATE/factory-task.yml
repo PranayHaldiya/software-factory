@@ -1,0 +1,32 @@
+name: Factory task
+description: Hand a piece of work to the factory. Only the repository owner's issues start a run.
+labels: ["factory"]
+body:
+  - type: textarea
+    id: change
+    attributes:
+      label: What should change
+      description: The behavior, file, or feature you want, as specifically as you can.
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why
+      description: The problem this solves or the reason for the change.
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: How we'll know it's done
+      description: Checks or outcomes that show the work is complete. Triage writes acceptance criteria from this.
+    validations:
+      required: false
+  - type: textarea
+    id: context
+    attributes:
+      label: Files or links
+      description: Code paths, docs, or related issues that help.
+    validations:
+      required: false
