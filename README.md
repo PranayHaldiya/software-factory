@@ -43,6 +43,8 @@ issue labeled "factory"
 
 Running `/install-github-app` inside Claude Code does steps 1 and 2 for you.
 
+If a station fails without a clear reason, set the repository variable `FACTORY_DEBUG` to `1` (`gh variable set FACTORY_DEBUG --body 1`) to print Claude's full output in the run log. Turn it off afterwards: the log then includes tool output.
+
 Mention `@claude` in any issue or pull request comment for one-off questions and changes (`.github/workflows/claude.yml`).
 
 ## Roadmap
