@@ -96,6 +96,14 @@ The stations are reusable workflows. Copy the four files in [`templates/workflow
 
 Inputs you can override in the caller: `reviewer_model`, `implementer_model`, `triage_model`, `max_reviews`, `max_ci_fixes`, `factory_ref`.
 
+## Known limits
+
+- **Changing the factory's own workflows mid-run.** claude-code-action only hands out the Claude app token when the workflow file matches the default branch. Runs that start before a change to `.github/workflows/factory-*.yml` lands and reach a Claude step after it fail that check. Reopen the pull request (or re-add the label) to run it again.
+- **Stations that push need `persist-credentials: false`** on their checkout. Otherwise checkout's stored token wins over the Claude app token, the push comes from `github-actions[bot]`, and GitHub holds the next run for approval. The workflows here already do this; keep it if you adapt them.
+- **Merges by the factory use the Actions token**, so GitHub neither closes linked issues nor starts `push` workflows for them. The gate closes the issues itself and starts the sync station directly.
+- **Evidence media lives on the `factory-evidence` branch** in Actions, because comment attachments need a user token. On a public repository those files are public.
+- **Every run counts toward the Claude subscription's usage limits.** A full pass with one revision is roughly six Claude runs (triage, implement, two reviews, revise, plus sync or CI fix when needed).
+
 ## Roadmap
 
 - [x] Station 1: triage, implement, draft pull request
