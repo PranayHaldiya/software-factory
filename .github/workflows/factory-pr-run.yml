@@ -302,7 +302,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.context.outputs.sha }}
+          # The pull request merged with its base, like CI tests it: checks and screenshots
+          # then reflect what would land, even when the branch is behind.
+          ref: refs/pull/${{ inputs.pr }}/merge
           fetch-depth: 0
 
       - uses: actions/checkout@v6
@@ -415,6 +417,12 @@ jobs:
               # sync station so other factory pull requests that now conflict get resolved.
               gh workflow run factory-sync.yml --repo "$GITHUB_REPOSITORY" 2>/dev/null ||
                 echo "No factory-sync.yml workflow in this repository; skipping the sync."
+              exit 0
+            fi
+            if [ "$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json mergeable --jq .mergeable)" = CONFLICTING ]; then
+              gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body "Approved and green, but the base branch moved and now conflicts. Starting the sync station."
+              gh workflow run factory-sync.yml --repo "$GITHUB_REPOSITORY" 2>/dev/null ||
+                echo "No factory-sync.yml workflow in this repository; a person needs to update the branch."
               exit 0
             fi
             echo "::warning::Merge failed; leaving the pull request for a person."
