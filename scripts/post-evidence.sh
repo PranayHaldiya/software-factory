@@ -15,6 +15,8 @@ mkdir -p "$media"
   echo "<!-- factory:evidence sha=$SHA -->"
   echo "## Evidence for $short"
   echo
+  echo "Checked out as the pull request merged with its base branch, which is what would land."
+  echo
   echo "### Checks"
   echo
   if [ "$CHECKS" = pass ]; then echo "All configured checks passed."; else echo "**Some configured checks failed.**"; fi
