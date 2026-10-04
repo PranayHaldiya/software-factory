@@ -1,0 +1,164 @@
+name: Factory sync station
+
+# Reusable. Find open factory pull requests that conflict with the default branch, merge the
+# default branch into each, and let Claude resolve the conflicts. GitHub doesn't run
+# pull_request workflows on a conflicting pull request, so without this a factory PR stalls
+# whenever another one lands first. The sync push uses the Claude app token, so it starts
+# the normal PR stations (factory-pr.yml) again.
+
+on:
+  workflow_call:
+    inputs:
+      factory_repo:
+        description: Repository that holds the station instructions and scripts.
+        type: string
+        default: PranayHaldiya/software-factory
+      factory_ref:
+        description: Git ref of factory_repo to use.
+        type: string
+        default: main
+      implementer_model:
+        type: string
+        default: opus
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN:
+        required: true
+
+jobs:
+  find:
+    name: factory-sync-find
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pull-requests: read
+    outputs:
+      prs: ${{ steps.find.outputs.prs }}
+    steps:
+      - name: Find conflicting factory pull requests
+        id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          # GitHub computes mergeability lazily after a push; ask, wait, then ask again.
+          list() {
+            gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 50 \
+              --json number,headRefName,mergeable,isCrossRepository,author,labels | jq --arg owner "$OWNER" '
+                [.[] | select(.headRefName | startswith("factory/"))
+                     | select(.isCrossRepository | not)
+                     | select(.author.login as $a | ["app/claude", "claude[bot]", "claude", $owner] | index($a) != null)
+                     | select([.labels[].name] | index("factory:hold") == null)]'
+          }
+          list > /dev/null
+          sleep 30
+          prs=$(list | jq -c '[.[] | select(.mergeable == "CONFLICTING") | .number]')
+          echo "Conflicting factory pull requests: $prs"
+          echo "prs=$prs" >> "$GITHUB_OUTPUT"
+
+  sync:
+    name: factory-sync
+    needs: find
+    if: needs.find.outputs.prs != '[]' && needs.find.outputs.prs != ''
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        pr: ${{ fromJSON(needs.find.outputs.prs) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+    steps:
+      - name: Read the pull request
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ matrix.pr }}
+        run: |
+          gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json headRefName,baseRefName,headRefOid \
+            --jq '"branch=\(.headRefName)\nbase=\(.baseRefName)\nsha=\(.headRefOid)"' >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.pr.outputs.branch }}
+          fetch-depth: 0
+          # Claude pushes with the Claude app token, so the push starts the PR stations again.
+          persist-credentials: false
+
+      - uses: actions/checkout@v6
+        with:
+          repository: ${{ inputs.factory_repo }}
+          ref: ${{ inputs.factory_ref }}
+          path: .factory
+
+      - name: Start the merge
+        id: merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE: ${{ steps.pr.outputs.base }}
+          BRANCH: ${{ steps.pr.outputs.branch }}
+          OUT: ${{ runner.temp }}/factory
+        run: |
+          echo ".factory/" >> .git/info/exclude
+          mkdir -p "$OUT"
+          issue=${BRANCH#factory/issue-}
+          if [[ "$issue" =~ ^[0-9]+$ ]]; then
+            .factory/scripts/write-criteria.sh "$issue" "$OUT/criteria.md"
+          else
+            echo "No linked issue." > "$OUT/criteria.md"
+          fi
+          echo "issue=$issue" >> "$GITHUB_OUTPUT"
+          if git -c user.name=factory -c user.email=factory@localhost merge --no-ff --no-commit "origin/$BASE"; then
+            git merge --abort || true
+            echo "conflicts=false" >> "$GITHUB_OUTPUT"
+            echo "No conflicts any more; nothing to do."
+          else
+            echo "conflicts=true" >> "$GITHUB_OUTPUT"
+            git diff --name-only --diff-filter=U
+          fi
+
+      - name: Repository setup
+        if: steps.merge.outputs.conflicts == 'true'
+        run: |
+          if [ -x .github/factory-setup.sh ]; then
+            .github/factory-setup.sh
+          fi
+
+      - name: Resolve
+        if: steps.merge.outputs.conflicts == 'true'
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          allowed_bots: claude
+          show_full_output: ${{ vars.FACTORY_DEBUG == '1' }}
+          prompt: |
+            You are the sync station of a software factory working on the repository ${{ github.repository }}.
+            Follow the instructions in .factory/stations/sync.md.
+            The criteria are in ${{ runner.temp }}/factory/criteria.md.
+            You are on the branch ${{ steps.pr.outputs.branch }} of pull request #${{ matrix.pr }}, in the middle of merging origin/${{ steps.pr.outputs.base }}. The issue number is ${{ steps.merge.outputs.issue }}.
+            The .factory directory holds the factory's own instructions. Don't edit or commit it.
+          claude_args: >-
+            --model ${{ inputs.implementer_model }}
+            --max-turns 60
+            --add-dir ${{ runner.temp }}/factory
+            --allowedTools "Read,Edit,Write,Glob,Grep,Bash(git:*),Bash(gh pr view:*),Bash(npm:*),Bash(npx:*),Bash(pnpm:*),Bash(yarn:*),Bash(bun:*),Bash(node:*),Bash(python3:*),Bash(pytest:*),Bash(make:*),Bash(actionlint:*),Bash(shellcheck:*),Bash(jq:*),Bash(ls:*),Bash(mkdir:*)"
+
+      - name: Confirm the push
+        if: steps.merge.outputs.conflicts == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ matrix.pr }}
+          BRANCH: ${{ steps.pr.outputs.branch }}
+          SHA: ${{ steps.pr.outputs.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          head=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$BRANCH" --jq .object.sha)
+          if [ "$head" = "$SHA" ]; then
+            gh pr edit "$PR" --repo "$GITHUB_REPOSITORY" --add-label factory:needs-human
+            gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body "This pull request conflicts with the base branch and the sync station couldn't resolve it. A person needs to. Run log: $RUN_URL"
+            exit 1
+          fi
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body "The base branch moved and conflicted with this pull request; the sync station merged it in and resolved the conflicts (${head:0:7}). The review starts again on the new commit."

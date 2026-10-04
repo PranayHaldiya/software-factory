@@ -25,7 +25,7 @@ jobs:
       issues: write
       checks: read
       statuses: read
-      actions: read
+      actions: write
       id-token: write
     uses: ./.github/workflows/factory-pr-run.yml
     with:

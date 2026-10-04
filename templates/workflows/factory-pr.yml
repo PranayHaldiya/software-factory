@@ -27,7 +27,7 @@ jobs:
       issues: write
       checks: read
       statuses: read
-      actions: read
+      actions: write
       id-token: write
     uses: PranayHaldiya/software-factory/.github/workflows/factory-pr-run.yml@main
     with:
