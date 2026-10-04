@@ -26,6 +26,7 @@
     }
     main { max-width: 860px; margin: 0 auto; padding: 56px 20px 72px; }
     h1 { font-size: 2.1rem; letter-spacing: -0.02em; margin: 0 0 8px; }
+    h2 { font-size: 1.3rem; letter-spacing: -0.01em; margin: 40px 0 16px; }
     .lede { color: var(--muted); font-size: 1.1rem; max-width: 60ch; margin: 0 0 40px; }
     ol { list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; }
     li {
@@ -59,9 +60,11 @@
 
     <h2>Set it up</h2>
     <ol>
-      <li>Install the Claude GitHub App on the repository.</li>
-      <li>Save a token as CLAUDE_CODE_OAUTH_TOKEN.</li>
-      <li>Create the factory label.</li>
+      <li><span class="n">1</span><span class="name">Install the app</span><span class="what">Install the <a href="https://github.com/apps/claude">Claude GitHub App</a> on the repository.</span></li>
+      <li><span class="n">2</span><span class="name">Save a token</span><span class="what">Create a subscription token with <code>claude setup-token</code> (Claude Pro or Max) and save it as the repository secret <code>CLAUDE_CODE_OAUTH_TOKEN</code>.</span></li>
+      <li><span class="n">3</span><span class="name">Create the label</span><span class="what">Create the <code>factory</code> label. The workflows create the other labels they use.</span></li>
+      <li><span class="n">4</span><span class="name">Configure checks (optional)</span><span class="what">Add <code>.github/factory.json</code> and an executable <code>.github/factory-setup.sh</code> that installs what your checks need. The setup script runs before the implement, revise, evidence, and CI-fix stations.</span></li>
+      <li><span class="n">5</span><span class="name">Allow merging (optional)</span><span class="what">Set the repository variable <code>FACTORY_AUTOMERGE</code> to <code>1</code> to let the factory merge green pull requests.</span></li>
     </ol>
 
     <footer>Source: <a href="https://github.com/PranayHaldiya/software-factory">github.com/PranayHaldiya/software-factory</a></footer>
