@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>software-factory</title>
+  <meta name="description" content="A software factory on GitHub Actions and Claude Code: label an issue, get a reviewed pull request.">
+  <style>
+    :root {
+      --bg: #f7f6f2;
+      --ink: #1d1c1a;
+      --muted: #6b6862;
+      --line: #dedad2;
+      --card: #ffffff;
+      --accent: #2f6f4f;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #151514; --ink: #eceae4; --muted: #a29f97; --line: #2e2d2a; --card: #1d1d1b; --accent: #7cc4a0; }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font: 16px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+    main { max-width: 860px; margin: 0 auto; padding: 56px 20px 72px; }
+    h1 { font-size: 2.1rem; letter-spacing: -0.02em; margin: 0 0 8px; }
+    .lede { color: var(--muted); font-size: 1.1rem; max-width: 60ch; margin: 0 0 40px; }
+    ol { list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; }
+    li {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 16px 18px;
+      display: grid;
+      grid-template-columns: 2.2rem 1fr;
+      gap: 4px 12px;
+    }
+    .n { grid-row: span 2; font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
+    .name { font-weight: 650; }
+    .what { color: var(--muted); }
+    footer { margin-top: 40px; color: var(--muted); font-size: 0.9rem; }
+    a { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>software-factory</h1>
+    <p class="lede">Label an issue <code>factory</code> and stations on GitHub Actions take it from triage to a reviewed, tested pull request. It runs on a Claude subscription, with no API bill.</p>
+
+    <ol>
+      <li><span class="n">1</span><span class="name">Triage</span><span class="what">Reads the issue and the code, writes acceptance criteria, or asks what's missing.</span></li>
+      <li><span class="n">2</span><span class="name">Implement</span><span class="what">Makes the smallest change that meets the criteria and opens a draft pull request.</span></li>
+      <li><span class="n">3</span><span class="name">Review</span><span class="what">A different model checks the diff against the criteria. Up to two revision rounds.</span></li>
+      <li><span class="n">4</span><span class="name">Evidence</span><span class="what">Runs the checks and attaches before and after screenshots and a video.</span></li>
+      <li><span class="n">5</span><span class="name">Gate</span><span class="what">Waits for CI, fixes red checks, and merges on green where that's allowed.</span></li>
+    </ol>
+
+    <footer>Source: <a href="https://github.com/PranayHaldiya/software-factory">github.com/PranayHaldiya/software-factory</a></footer>
+  </main>
+</body>
+</html>

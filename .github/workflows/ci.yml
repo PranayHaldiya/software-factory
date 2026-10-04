@@ -21,8 +21,16 @@ jobs:
       - name: Lint workflows
         run: actionlint -color
 
+      - name: Lint scripts
+        run: |
+          shellcheck scripts/*.sh .github/factory-setup.sh
+          node --check scripts/evidence.mjs
+
+      - name: Factory config is valid JSON
+        run: jq -e '.checks | type == "array"' .github/factory.json > /dev/null
+
       - name: Station instructions are present
         run: |
-          for f in stations/triage.md stations/implement.md; do
+          for f in stations/triage.md stations/implement.md stations/review.md stations/revise.md stations/ci-fix.md; do
             test -s "$f" || { echo "::error file=$f::missing or empty"; exit 1; }
           done
