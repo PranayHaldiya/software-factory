@@ -132,7 +132,8 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          allowed_bots: claude
+          # The gate starts this workflow with the Actions token after a merge.
+          allowed_bots: claude,github-actions
           show_full_output: ${{ vars.FACTORY_DEBUG == '1' }}
           prompt: |
             You are the sync station of a software factory working on the repository ${{ github.repository }}.
