@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Post the evidence comment on a factory pull request: the configured checks, before/after
-# screenshots, and the after video. Media is uploaded with `gh pr comment --attach`; if that
-# isn't allowed for this token, it is committed to the `factory-evidence` branch and linked.
+# screenshots, and the after video. Media is uploaded with `gh pr comment --attach` when the token
+# allows it (user tokens do). The Actions token doesn't ("unsupported authentication type"), so in
+# workflows the media is committed to the `factory-evidence` branch and linked from the comment.
 # Env: GH_TOKEN, PR, SHA, OUT (holds checks.md and media/), CHECKS (pass|fail), MEDIA_OUTCOME (step outcome), RUN_URL
 set -euo pipefail
 
@@ -63,7 +64,7 @@ if (cd "$media" && gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file "
   exit 0
 fi
 
-echo "::warning::gh --attach failed for this token; publishing the media to the factory-evidence branch instead."
+echo "gh --attach isn't available with this token; publishing the media to the factory-evidence branch."
 dir="pr-$PR/$short"
 work="$(mktemp -d)"
 remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"

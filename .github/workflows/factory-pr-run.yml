@@ -231,6 +231,8 @@ jobs:
         with:
           ref: ${{ needs.context.outputs.branch }}
           fetch-depth: 0
+          # Claude pushes with the Claude app token, so the push starts the next run.
+          persist-credentials: false
 
       - uses: actions/checkout@v6
         with:
@@ -276,11 +278,12 @@ jobs:
 
       - name: Confirm a new commit
         env:
+          GH_TOKEN: ${{ github.token }}
           BRANCH: ${{ needs.context.outputs.branch }}
           SHA: ${{ needs.context.outputs.sha }}
         run: |
-          git fetch --quiet origin "$BRANCH"
-          if [ "$(git rev-parse "origin/$BRANCH")" = "$SHA" ]; then
+          head=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$BRANCH" --jq .object.sha)
+          if [ "$head" = "$SHA" ]; then
             echo "::error::The revise station pushed nothing."
             exit 1
           fi
@@ -403,6 +406,11 @@ jobs:
             gh pr ready "$PR" --repo "$GITHUB_REPOSITORY" || true
             if gh pr merge "$PR" --repo "$GITHUB_REPOSITORY" --squash --delete-branch --match-head-commit "$SHA"; then
               gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body "Merged by the factory: the review approved ${SHA:0:7}, the evidence is attached, and every check passed."
+              # GitHub doesn't act on "Closes #n" for merges made with the Actions token.
+              for issue in $(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json closingIssuesReferences --jq '.closingIssuesReferences[].number'); do
+                gh issue close "$issue" --repo "$GITHUB_REPOSITORY" --reason completed --comment "Done in #$PR." || true
+                gh issue edit "$issue" --repo "$GITHUB_REPOSITORY" --remove-label factory:pr-open 2>/dev/null || true
+              done
               exit 0
             fi
             echo "::warning::Merge failed; leaving the pull request for a person."
@@ -431,6 +439,8 @@ jobs:
         with:
           ref: ${{ needs.context.outputs.branch }}
           fetch-depth: 0
+          # Claude pushes with the Claude app token, so the push starts the next run.
+          persist-credentials: false
 
       - uses: actions/checkout@v6
         with:
@@ -482,11 +492,12 @@ jobs:
 
       - name: Confirm a new commit
         env:
+          GH_TOKEN: ${{ github.token }}
           BRANCH: ${{ needs.context.outputs.branch }}
           SHA: ${{ needs.context.outputs.sha }}
         run: |
-          git fetch --quiet origin "$BRANCH"
-          if [ "$(git rev-parse "origin/$BRANCH")" = "$SHA" ]; then
+          head=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$BRANCH" --jq .object.sha)
+          if [ "$head" = "$SHA" ]; then
             echo "::error::The CI-fix station pushed nothing. See its summary in the run log."
             exit 1
           fi
