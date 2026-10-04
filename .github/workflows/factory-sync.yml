@@ -1,9 +1,10 @@
 name: Factory sync
 
 # When the default branch moves, resolve conflicts in open factory pull requests
-# (factory-sync-run.yml). Pushes made with the Actions token don't trigger `push`, so after
-# the factory merges a pull request the gate starts this workflow with workflow_dispatch.
-# Run it by hand to check now.
+# (factory-sync-run.yml). claude-code-action doesn't run on `push` events, so a push only
+# starts a workflow_dispatch run of this workflow, which does the work. Pushes made with the
+# Actions token don't trigger `push` at all, so after the factory merges a pull request the
+# gate dispatches this workflow directly. Run it by hand to check now.
 
 on:
   push:
@@ -11,12 +12,26 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: factory-sync
+  group: factory-sync-${{ github.event_name }}
   cancel-in-progress: false
 
 jobs:
+  dispatch:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - name: Start a sync run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run factory-sync.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME"
+
   factory:
-    if: github.event_name == 'push' || github.actor == github.repository_owner || github.actor == 'github-actions[bot]'
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      (github.actor == github.repository_owner || github.actor == 'github-actions[bot]')
     permissions:
       contents: write
       pull-requests: write
