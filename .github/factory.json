@@ -1,0 +1,13 @@
+{
+  "checks": [
+    "actionlint -color",
+    "shellcheck scripts/*.sh .github/factory-setup.sh",
+    "node --check scripts/evidence.mjs",
+    "for f in stations/triage.md stations/implement.md stations/review.md stations/revise.md stations/ci-fix.md; do test -s \"$f\" || { echo \"missing: $f\"; exit 1; }; done"
+  ],
+  "evidence": {
+    "start": "python3 -m http.server \"$PORT\" --directory site",
+    "routes": ["/"],
+    "ready_path": "/"
+  }
+}

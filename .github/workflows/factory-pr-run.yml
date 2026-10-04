@@ -1,0 +1,516 @@
+name: Factory PR stations
+
+# Reusable. Runs once per push to a factory pull request (called by factory-pr.yml):
+#
+#   review ─┬─ changes requested ──▶ revise (pushes, which starts the next run)
+#           │                        └▶ after max_reviews rounds: hand to a person
+#           └─ approved ──▶ evidence ──▶ gate: wait for the other checks
+#                                         ├─ red ──▶ ci-fix (pushes; max_ci_fixes attempts)
+#                                         └─ green ──▶ merge (automerge) or label factory:ready
+#
+# Each run judges one head commit. Pushes from the revise and CI-fix stations use the
+# Claude app token, so they trigger the next run; GITHUB_TOKEN comments and labels don't.
+
+on:
+  workflow_call:
+    inputs:
+      pr:
+        description: Pull request number.
+        type: number
+        required: true
+      automerge:
+        description: Merge when the review, the evidence and every other check pass.
+        type: boolean
+        default: false
+      factory_repo:
+        description: Repository that holds the station instructions and scripts.
+        type: string
+        default: PranayHaldiya/software-factory
+      factory_ref:
+        description: Git ref of factory_repo to use.
+        type: string
+        default: main
+      reviewer_model:
+        description: Model for the reviewer. Different from the implementer on purpose.
+        type: string
+        default: fable
+      implementer_model:
+        description: Model for the revise and CI-fix stations.
+        type: string
+        default: opus
+      max_reviews:
+        description: Review rounds before the pull request goes to a person (so max_reviews - 1 revisions).
+        type: number
+        default: 3
+      max_ci_fixes:
+        description: CI-fix attempts before the pull request goes to a person.
+        type: number
+        default: 2
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN:
+        required: true
+
+jobs:
+  context:
+    name: factory-context
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: write
+    outputs:
+      eligible: ${{ steps.pr.outputs.eligible }}
+      sha: ${{ steps.pr.outputs.sha }}
+      branch: ${{ steps.pr.outputs.branch }}
+      base: ${{ steps.pr.outputs.base }}
+      issue: ${{ steps.pr.outputs.issue }}
+      reviews: ${{ steps.pr.outputs.reviews }}
+      fixes: ${{ steps.pr.outputs.fixes }}
+    steps:
+      - name: Read the pull request
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ inputs.pr }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          pr=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" \
+            --json state,headRefName,headRefOid,baseRefName,author,isCrossRepository,labels,comments)
+          branch=$(jq -r .headRefName <<<"$pr")
+          # Only pull requests the factory opened (or the owner opened) on a factory/ branch
+          # in this repository, and not put on hold with the factory:hold label.
+          eligible=$(jq --arg owner "$OWNER" '
+            .state == "OPEN"
+            and (.headRefName | startswith("factory/"))
+            and (.isCrossRepository | not)
+            and (.author.login as $a | ["app/claude", "claude[bot]", "claude", $owner] | index($a) != null)
+            and ([.labels[].name] | index("factory:hold") == null)' <<<"$pr")
+          count() { jq --arg m "$1" '[.comments[] | select(.author.login | test("^(app/)?github-actions")) | select(.body | startswith($m))] | length' <<<"$pr"; }
+          issue=${branch#factory/issue-}
+          [[ "$issue" =~ ^[0-9]+$ ]] || issue=""
+          {
+            echo "eligible=$eligible"
+            echo "sha=$(jq -r .headRefOid <<<"$pr")"
+            echo "branch=$branch"
+            echo "base=$(jq -r .baseRefName <<<"$pr")"
+            echo "issue=$issue"
+            echo "reviews=$(count '<!-- factory:review ')"
+            echo "fixes=$(count '<!-- factory:ci-fix ')"
+          } >> "$GITHUB_OUTPUT"
+          cat "$GITHUB_OUTPUT"
+
+      - name: Create the factory labels
+        if: steps.pr.outputs.eligible == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for label in factory:approved:0e8a16 factory:changes-requested:d93f0b factory:needs-human:b60205 factory:ready:1d76db factory:hold:bfbfbf; do
+            gh label create "${label%:*}" --color "${label##*:}" --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
+          done
+
+  review:
+    name: factory-review
+    needs: context
+    if: needs.context.outputs.eligible == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    outputs:
+      verdict: ${{ steps.post.outputs.verdict }}
+      round: ${{ steps.post.outputs.round }}
+      result: ${{ steps.review.outputs.structured_output }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.context.outputs.sha }}
+          fetch-depth: 0
+
+      - uses: actions/checkout@v6
+        with:
+          repository: ${{ inputs.factory_repo }}
+          ref: ${{ inputs.factory_ref }}
+          path: .factory
+
+      - name: Write the review inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ inputs.pr }}
+          ISSUE: ${{ needs.context.outputs.issue }}
+          OUT: ${{ runner.temp }}/factory
+        run: |
+          echo ".factory/" >> .git/info/exclude
+          mkdir -p "$OUT"
+          if [ -n "$ISSUE" ]; then
+            .factory/scripts/write-criteria.sh "$ISSUE" "$OUT/criteria.md"
+          else
+            echo "No linked issue. Judge the change against the pull request title." > "$OUT/criteria.md"
+          fi
+          gh pr diff "$PR" --repo "$GITHUB_REPOSITORY" > "$OUT/diff.patch"
+          wc -l "$OUT/diff.patch"
+
+      - name: Review
+        id: review
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ github.token }}
+          allowed_bots: claude
+          show_full_output: ${{ vars.FACTORY_DEBUG == '1' }}
+          prompt: |
+            You are the reviewer station of a software factory working on the repository ${{ github.repository }}.
+            Follow the instructions in .factory/stations/review.md.
+            The acceptance criteria and the owner's issue are in ${{ runner.temp }}/factory/criteria.md.
+            The diff is in ${{ runner.temp }}/factory/diff.patch. The repository is checked out at the pull request's head.
+            The .factory directory holds the factory's own instructions and is not part of the change.
+          claude_args: >-
+            --model ${{ inputs.reviewer_model }}
+            --max-turns 40
+            --add-dir ${{ runner.temp }}/factory
+            --allowedTools "Read,Glob,Grep"
+            --json-schema '{"type":"object","properties":{"verdict":{"type":"string","enum":["approve","request_changes"]},"summary":{"type":"string"},"criteria":{"type":"array","items":{"type":"object","properties":{"criterion":{"type":"string"},"met":{"type":"boolean"},"evidence":{"type":"string"}},"required":["criterion","met","evidence"]}},"findings":{"type":"array","items":{"type":"object","properties":{"severity":{"type":"string","enum":["blocker","major","minor","nit"]},"file":{"type":"string"},"line":{"type":"integer"},"problem":{"type":"string"},"suggestion":{"type":"string"}},"required":["severity","file","line","problem","suggestion"]}}},"required":["verdict","summary","criteria","findings"]}'
+
+      - name: Post the review
+        id: post
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ inputs.pr }}
+          SHA: ${{ needs.context.outputs.sha }}
+          PREVIOUS: ${{ needs.context.outputs.reviews }}
+          MODEL: ${{ inputs.reviewer_model }}
+          RESULT: ${{ steps.review.outputs.structured_output }}
+          OUT: ${{ runner.temp }}/factory
+        run: |
+          round=$((PREVIOUS + 1))
+          # The verdict is decided here, not trusted from the model: any unmet criterion or
+          # blocker/major finding means changes are requested.
+          verdict=$(jq -r '
+            if ([.criteria[] | select(.met | not)] | length) > 0
+               or ([.findings[] | select(.severity == "blocker" or .severity == "major")] | length) > 0
+               or .verdict != "approve"
+            then "request_changes" else "approve" end' <<<"$RESULT")
+          jq -r --arg sha "$SHA" --arg round "$round" --arg verdict "$verdict" --arg model "$MODEL" '
+            def cell: tostring | gsub("\\|"; "\\|") | gsub("\n"; " ");
+            "<!-- factory:review sha=\($sha) round=\($round) verdict=\($verdict) -->\n"
+            + "## Review, round \($round): " + (if $verdict == "approve" then "approved" else "changes requested" end) + "\n\n"
+            + .summary + "\n\n### Acceptance criteria\n\n"
+            + ([.criteria[] | "- [" + (if .met then "x" else " " end) + "] " + .criterion + "\n  " + (.evidence | gsub("\n"; " "))] | join("\n"))
+            + (if (.findings | length) > 0 then
+                 "\n\n### Findings\n\n| Severity | Where | Problem | Suggestion |\n|---|---|---|---|\n"
+                 + ([.findings[] | "| \(.severity) | `\(.file)\(if .line > 0 then ":\(.line)" else "" end)` | \(.problem | cell) | \(.suggestion | cell) |"] | join("\n"))
+               else "" end)
+            + "\n\n<sub>Reviewed by `\($model)` at \($sha[0:7]). The reviewer sees the diff and the triage criteria, not the implementer'"'"'s notes.</sub>"
+          ' <<<"$RESULT" > "$OUT/review-comment.md"
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file "$OUT/review-comment.md"
+          if [ "$verdict" = approve ]; then
+            gh pr edit "$PR" --repo "$GITHUB_REPOSITORY" --add-label factory:approved --remove-label factory:changes-requested
+          else
+            gh pr edit "$PR" --repo "$GITHUB_REPOSITORY" --add-label factory:changes-requested --remove-label factory:approved
+          fi
+          echo "verdict=$verdict" >> "$GITHUB_OUTPUT"
+          echo "round=$round" >> "$GITHUB_OUTPUT"
+
+  revise:
+    name: factory-revise
+    needs: [context, review]
+    if: >-
+      needs.review.outputs.verdict == 'request_changes' &&
+      fromJSON(needs.review.outputs.round || '0') < inputs.max_reviews
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.context.outputs.branch }}
+          fetch-depth: 0
+
+      - uses: actions/checkout@v6
+        with:
+          repository: ${{ inputs.factory_repo }}
+          ref: ${{ inputs.factory_ref }}
+          path: .factory
+
+      - name: Write the revision inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ needs.context.outputs.issue }}
+          RESULT: ${{ needs.review.outputs.result }}
+          OUT: ${{ runner.temp }}/factory
+        run: |
+          echo ".factory/" >> .git/info/exclude
+          mkdir -p "$OUT"
+          jq . <<<"$RESULT" > "$OUT/review.json"
+          if [ -n "$ISSUE" ]; then .factory/scripts/write-criteria.sh "$ISSUE" "$OUT/criteria.md"; fi
+
+      - name: Repository setup
+        run: |
+          if [ -x .github/factory-setup.sh ]; then
+            .github/factory-setup.sh
+          fi
+
+      - name: Revise
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          allowed_bots: claude
+          show_full_output: ${{ vars.FACTORY_DEBUG == '1' }}
+          prompt: |
+            You are the revise station of a software factory working on the repository ${{ github.repository }}.
+            Follow the instructions in .factory/stations/revise.md.
+            The review is in ${{ runner.temp }}/factory/review.json and the criteria are in ${{ runner.temp }}/factory/criteria.md.
+            You are on the branch ${{ needs.context.outputs.branch }} of pull request #${{ inputs.pr }}. The issue number is ${{ needs.context.outputs.issue }}.
+            The .factory directory holds the factory's own instructions. Don't edit or commit it.
+          claude_args: >-
+            --model ${{ inputs.implementer_model }}
+            --max-turns 80
+            --add-dir ${{ runner.temp }}/factory
+            --allowedTools "Read,Edit,Write,Glob,Grep,Bash(git:*),Bash(gh pr view:*),Bash(gh pr edit:*),Bash(npm:*),Bash(npx:*),Bash(pnpm:*),Bash(yarn:*),Bash(bun:*),Bash(node:*),Bash(python3:*),Bash(pytest:*),Bash(make:*),Bash(actionlint:*),Bash(shellcheck:*),Bash(jq:*),Bash(ls:*),Bash(mkdir:*)"
+
+      - name: Confirm a new commit
+        env:
+          BRANCH: ${{ needs.context.outputs.branch }}
+          SHA: ${{ needs.context.outputs.sha }}
+        run: |
+          git fetch --quiet origin "$BRANCH"
+          if [ "$(git rev-parse "origin/$BRANCH")" = "$SHA" ]; then
+            echo "::error::The revise station pushed nothing."
+            exit 1
+          fi
+
+  evidence:
+    name: factory-evidence
+    needs: [context, review]
+    if: needs.review.outputs.verdict == 'approve'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      checks: ${{ steps.checks.outputs.result }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.context.outputs.sha }}
+          fetch-depth: 0
+
+      - uses: actions/checkout@v6
+        with:
+          repository: ${{ inputs.factory_repo }}
+          ref: ${{ inputs.factory_ref }}
+          path: .factory
+
+      - name: Repository setup
+        run: |
+          echo ".factory/" >> .git/info/exclude
+          if [ -x .github/factory-setup.sh ]; then
+            .github/factory-setup.sh
+          fi
+
+      - name: Run the configured checks
+        id: checks
+        env:
+          BASE: ${{ needs.context.outputs.base }}
+          OUT: ${{ runner.temp }}/factory
+        run: |
+          mkdir -p "$OUT"
+          if .factory/scripts/run-checks.sh "$BASE" "$OUT/checks.md"; then
+            echo "result=pass" >> "$GITHUB_OUTPUT"
+          else
+            echo "result=fail" >> "$GITHUB_OUTPUT"
+          fi
+          cat "$OUT/checks.md"
+
+      - name: Screenshots and video
+        id: media
+        continue-on-error: true
+        env:
+          BASE: ${{ needs.context.outputs.base }}
+          OUT: ${{ runner.temp }}/factory
+        run: .factory/scripts/evidence.sh "$BASE" "$OUT/media"
+
+      - name: Post the evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ inputs.pr }}
+          SHA: ${{ needs.context.outputs.sha }}
+          OUT: ${{ runner.temp }}/factory
+          CHECKS: ${{ steps.checks.outputs.result }}
+          MEDIA_OUTCOME: ${{ steps.media.outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: .factory/scripts/post-evidence.sh
+
+  gate:
+    name: factory-gate
+    needs: [context, review, evidence]
+    if: needs.review.outputs.verdict == 'approve'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      checks: read
+      statuses: read
+      actions: read
+    outputs:
+      failed: ${{ steps.decide.outputs.failed }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: ${{ inputs.factory_repo }}
+          ref: ${{ inputs.factory_ref }}
+          path: .factory
+
+      - name: Wait for the other checks
+        id: wait
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ needs.context.outputs.sha }}
+        run: .factory/scripts/wait-checks.sh "$SHA" 1800
+
+      - name: Merge or mark ready
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ inputs.pr }}
+          SHA: ${{ needs.context.outputs.sha }}
+          STATE: ${{ steps.wait.outputs.state }}
+          FAILED: ${{ steps.wait.outputs.failed }}
+          CHECKS: ${{ needs.evidence.outputs.checks }}
+          AUTOMERGE: ${{ inputs.automerge }}
+        run: |
+          if [ "$STATE" != success ] || [ "$CHECKS" = fail ]; then
+            echo "Not green: state=$STATE failed=$FAILED factory checks=$CHECKS"
+            echo "failed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "failed=false" >> "$GITHUB_OUTPUT"
+          head=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json headRefOid --jq .headRefOid)
+          if [ "$head" != "$SHA" ]; then
+            echo "The branch moved to $head while this run checked $SHA; the newer run decides."
+            exit 0
+          fi
+          if [ "$AUTOMERGE" = true ]; then
+            gh pr ready "$PR" --repo "$GITHUB_REPOSITORY" || true
+            if gh pr merge "$PR" --repo "$GITHUB_REPOSITORY" --squash --delete-branch --match-head-commit "$SHA"; then
+              gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body "Merged by the factory: the review approved ${SHA:0:7}, the evidence is attached, and every check passed."
+              exit 0
+            fi
+            echo "::warning::Merge failed; leaving the pull request for a person."
+          fi
+          gh pr edit "$PR" --repo "$GITHUB_REPOSITORY" --add-label factory:ready
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body "Ready to merge: the review approved ${SHA:0:7}, the evidence is attached, and every check passed. Merging is left to a person on this repository."
+
+  ci-fix:
+    name: factory-ci-fix
+    needs: [context, gate]
+    if: >-
+      needs.gate.outputs.failed == 'true' &&
+      fromJSON(needs.context.outputs.fixes || '0') < inputs.max_ci_fixes
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: read
+      checks: read
+      statuses: read
+      actions: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.context.outputs.branch }}
+          fetch-depth: 0
+
+      - uses: actions/checkout@v6
+        with:
+          repository: ${{ inputs.factory_repo }}
+          ref: ${{ inputs.factory_ref }}
+          path: .factory
+
+      - name: Repository setup
+        run: |
+          echo ".factory/" >> .git/info/exclude
+          if [ -x .github/factory-setup.sh ]; then
+            .github/factory-setup.sh
+          fi
+
+      - name: Collect the failures
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ inputs.pr }}
+          SHA: ${{ needs.context.outputs.sha }}
+          BASE: ${{ needs.context.outputs.base }}
+          ISSUE: ${{ needs.context.outputs.issue }}
+          ATTEMPT: ${{ needs.context.outputs.fixes }}
+          OUT: ${{ runner.temp }}/factory
+        run: |
+          mkdir -p "$OUT"
+          .factory/scripts/collect-failures.sh "$SHA" "$BASE" "$OUT/failure.md"
+          if [ -n "$ISSUE" ]; then .factory/scripts/write-criteria.sh "$ISSUE" "$OUT/criteria.md"; fi
+          n=$((ATTEMPT + 1))
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body "<!-- factory:ci-fix sha=$SHA n=$n -->
+          Checks failed on ${SHA:0:7}. The CI-fix station is on it (attempt $n)."
+
+      - name: Fix
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          allowed_bots: claude
+          show_full_output: ${{ vars.FACTORY_DEBUG == '1' }}
+          prompt: |
+            You are the CI-fix station of a software factory working on the repository ${{ github.repository }}.
+            Follow the instructions in .factory/stations/ci-fix.md.
+            The failures are in ${{ runner.temp }}/factory/failure.md and the criteria are in ${{ runner.temp }}/factory/criteria.md.
+            You are on the branch ${{ needs.context.outputs.branch }} of pull request #${{ inputs.pr }}. The issue number is ${{ needs.context.outputs.issue }}.
+            The .factory directory holds the factory's own instructions. Don't edit or commit it.
+          claude_args: >-
+            --model ${{ inputs.implementer_model }}
+            --max-turns 80
+            --add-dir ${{ runner.temp }}/factory
+            --allowedTools "Read,Edit,Write,Glob,Grep,Bash(git:*),Bash(gh pr view:*),Bash(gh run view:*),Bash(npm:*),Bash(npx:*),Bash(pnpm:*),Bash(yarn:*),Bash(bun:*),Bash(node:*),Bash(python3:*),Bash(pytest:*),Bash(make:*),Bash(actionlint:*),Bash(shellcheck:*),Bash(jq:*),Bash(ls:*),Bash(mkdir:*)"
+
+      - name: Confirm a new commit
+        env:
+          BRANCH: ${{ needs.context.outputs.branch }}
+          SHA: ${{ needs.context.outputs.sha }}
+        run: |
+          git fetch --quiet origin "$BRANCH"
+          if [ "$(git rev-parse "origin/$BRANCH")" = "$SHA" ]; then
+            echo "::error::The CI-fix station pushed nothing. See its summary in the run log."
+            exit 1
+          fi
+
+  hand-off:
+    name: factory-hand-off
+    needs: [context, review, revise, gate, ci-fix]
+    if: >-
+      always() && needs.context.outputs.eligible == 'true' && (
+        failure() ||
+        (needs.review.outputs.verdict == 'request_changes' && fromJSON(needs.review.outputs.round || '0') >= inputs.max_reviews) ||
+        (needs.gate.outputs.failed == 'true' && fromJSON(needs.context.outputs.fixes || '0') >= inputs.max_ci_fixes)
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+      issues: write
+    steps:
+      - name: Hand the pull request to a person
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ inputs.pr }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh pr edit "$PR" --repo "$GITHUB_REPOSITORY" --add-label factory:needs-human
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body "The factory has stopped on this pull request and needs a person: it ran out of review or CI-fix rounds, or a station failed. Run log: $RUN_URL"

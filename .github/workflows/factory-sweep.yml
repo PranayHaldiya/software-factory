@@ -1,0 +1,78 @@
+name: Factory sweep
+
+# A queue for work that can wait: label an issue `factory:queued` (from the GitHub app on
+# your phone, for example) and the nightly sweep starts the oldest one. Run it by hand with
+# an issue number to start that issue now.
+
+on:
+  schedule:
+    - cron: "30 21 * * *" # 03:00 in India
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: Issue number to start now (optional; defaults to the oldest queued issue).
+        required: false
+        type: string
+
+concurrency:
+  group: factory-sweep
+  cancel-in-progress: false
+
+jobs:
+  pick:
+    name: factory-pick
+    if: github.event_name == 'schedule' || github.actor == github.repository_owner
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    outputs:
+      issue: ${{ steps.pick.outputs.issue }}
+    steps:
+      - name: Pick the next issue
+        id: pick
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+          REQUESTED: ${{ inputs.issue }}
+        run: |
+          gh label create factory:queued --color fbca04 --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
+          owner_labeled() { # The owner must have written the issue and applied factory:queued.
+            gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$1/events" \
+              --jq '[.[] | select(.event == "labeled" and .label.name == "factory:queued")] | last | .actor.login // ""' |
+              tail -n 1 | grep -qx "$OWNER"
+          }
+          if [ -n "$REQUESTED" ]; then
+            author=$(gh issue view "$REQUESTED" --repo "$GITHUB_REPOSITORY" --json author,state --jq 'select(.state == "OPEN") | .author.login')
+            if [ "$author" != "$OWNER" ]; then
+              echo "::error::Issue #$REQUESTED is closed or wasn't written by the owner."
+              exit 1
+            fi
+            issue="$REQUESTED"
+          else
+            issue=""
+            for n in $(gh issue list --repo "$GITHUB_REPOSITORY" --state open --label factory:queued --author "$OWNER" \
+                --json number,createdAt --jq 'sort_by(.createdAt) | .[].number'); do
+              if owner_labeled "$n"; then issue="$n"; break; fi
+            done
+          fi
+          if [ -z "$issue" ]; then
+            echo "Nothing queued."
+            exit 0
+          fi
+          gh issue edit "$issue" --repo "$GITHUB_REPOSITORY" --remove-label factory:queued 2>/dev/null || true
+          echo "issue=$issue" >> "$GITHUB_OUTPUT"
+          echo "Starting issue #$issue" >> "$GITHUB_STEP_SUMMARY"
+
+  run:
+    needs: pick
+    if: needs.pick.outputs.issue != ''
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+    uses: ./.github/workflows/factory-issue.yml
+    with:
+      issue: ${{ fromJSON(needs.pick.outputs.issue) }}
+    secrets: inherit

@@ -1,3 +1,5 @@
+# Copy into .github/workflows/ of a repository that should use the factory.
+# See https://github.com/PranayHaldiya/software-factory#use-it-in-another-repository
 name: Factory
 
 # Hand an issue to the factory by adding the `factory` label.
@@ -24,7 +26,7 @@ jobs:
       pull-requests: write
       issues: write
       id-token: write
-    uses: ./.github/workflows/factory-issue.yml
+    uses: PranayHaldiya/software-factory/.github/workflows/factory-issue.yml@main
     with:
       issue: ${{ github.event.issue.number }}
     secrets: inherit

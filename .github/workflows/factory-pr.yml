@@ -1,0 +1,34 @@
+name: Factory PR
+
+# Every push to a factory/* pull request runs the PR stations in factory-pr-run.yml:
+# review, revise, evidence, the CI gate, CI fixes, and merge.
+# Merging needs the repository variable FACTORY_AUTOMERGE=1; without it the factory
+# labels the pull request factory:ready and a person merges.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  # A newer push replaces the run for the older commit.
+  group: factory-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  factory:
+    if: >-
+      startsWith(github.head_ref, 'factory/') &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      checks: read
+      statuses: read
+      actions: read
+      id-token: write
+    uses: ./.github/workflows/factory-pr-run.yml
+    with:
+      pr: ${{ github.event.pull_request.number }}
+      automerge: ${{ vars.FACTORY_AUTOMERGE == '1' }}
+    secrets: inherit
