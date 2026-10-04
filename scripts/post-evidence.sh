@@ -81,7 +81,20 @@ cp "$media"/*.webm "$work/$dir/" 2>/dev/null || true
 git -C "$work" add -A
 git -C "$work" -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
   commit --quiet -m "Evidence for #$PR at $short"
-git -C "$work" push --quiet origin factory-evidence
+# Several pull requests can publish at once; each writes its own folder, so rebasing can't conflict.
+pushed=""
+for attempt in 1 2 3 4 5; do
+  if git -C "$work" push --quiet origin factory-evidence; then
+    pushed=1
+    break
+  fi
+  sleep $((attempt * 2))
+  git -C "$work" pull --quiet --rebase origin factory-evidence || true
+done
+if [ -z "$pushed" ]; then
+  echo "::error::Could not publish the evidence media to the factory-evidence branch."
+  exit 1
+fi
 
 base="https://github.com/$GITHUB_REPOSITORY/blob/factory-evidence/$dir"
 sed -i -E "s#\(\./([^)]+)\)#($base/\1?raw=true)#g" "$body"
