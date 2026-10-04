@@ -41,6 +41,8 @@
     .n { grid-row: span 2; font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
     .name { font-weight: 650; }
     .what { color: var(--muted); }
+    h2 { font-size: 1.25rem; margin: 40px 0 8px; }
+    .cost { color: var(--muted); max-width: 60ch; margin: 0; }
     footer { margin-top: 40px; color: var(--muted); font-size: 0.9rem; }
     a { color: var(--accent); }
   </style>
@@ -66,6 +68,9 @@
       <li><span class="n">4</span><span class="name">Configure checks (optional)</span><span class="what">Add <code>.github/factory.json</code> and an executable <code>.github/factory-setup.sh</code> that installs what your checks need. The setup script runs before the implement, revise, evidence, and CI-fix stations.</span></li>
       <li><span class="n">5</span><span class="name">Allow merging (optional)</span><span class="what">Set the repository variable <code>FACTORY_AUTOMERGE</code> to <code>1</code> to let the factory merge green pull requests.</span></li>
     </ol>
+
+    <h2>What it costs</h2>
+    <p class="cost">Actions minutes are free on public repositories. Claude Code runs on a Claude subscription's OAuth token instead of per-token API billing. Every factory run counts toward that subscription's usage limits.</p>
 
     <footer>Source: <a href="https://github.com/PranayHaldiya/software-factory">github.com/PranayHaldiya/software-factory</a></footer>
   </main>
