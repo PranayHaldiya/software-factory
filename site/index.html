@@ -40,6 +40,8 @@
     .n { grid-row: span 2; font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
     .name { font-weight: 650; }
     .what { color: var(--muted); }
+    h2 { font-size: 1.25rem; margin: 40px 0 8px; }
+    .cost { color: var(--muted); max-width: 60ch; margin: 0; }
     footer { margin-top: 40px; color: var(--muted); font-size: 0.9rem; }
     a { color: var(--accent); }
   </style>
@@ -56,6 +58,9 @@
       <li><span class="n">4</span><span class="name">Evidence</span><span class="what">Runs the checks and attaches before and after screenshots and a video.</span></li>
       <li><span class="n">5</span><span class="name">Gate</span><span class="what">Waits for CI, fixes red checks, and merges on green where that's allowed.</span></li>
     </ol>
+
+    <h2>What it costs</h2>
+    <p class="cost">Actions minutes are free on public repositories. Claude Code runs on a Claude subscription's OAuth token instead of per-token API billing. Every factory run counts toward that subscription's usage limits.</p>
 
     <footer>Source: <a href="https://github.com/PranayHaldiya/software-factory">github.com/PranayHaldiya/software-factory</a></footer>
   </main>
