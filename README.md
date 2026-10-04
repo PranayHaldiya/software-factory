@@ -33,6 +33,8 @@ issue labeled "factory"            (or "factory:queued", picked up by the nightl
                     └─────┬─────┘ ─────▶ merge (FACTORY_AUTOMERGE=1) or label factory:ready
                           │
                   out of rounds ──▶ label factory:needs-human
+
+  default branch moves ──▶ sync: merge it into conflicting factory PRs, resolve, push
 ```
 
 - **Triage** reads the issue and the relevant code and returns a structured verdict: actionable or not, kind, size, a summary, acceptance criteria, and questions. It only gets read tools. If the item isn't ready, or is too large for one pull request, it asks on the issue instead of building the wrong thing. When it is ready, the criteria are posted on the issue so later stations judge against them.
@@ -41,6 +43,7 @@ issue labeled "factory"            (or "factory:queued", picked up by the nightl
 - **Revise** fixes what the review found and pushes, which starts the next round. After three reviews the pull request goes to a person.
 - **Evidence** runs the checks from `.github/factory.json` and, when the repository has a UI, takes before and after screenshots of the configured pages and records a short video of the change. GitHub only accepts comment attachments from user tokens, so in Actions the media is committed to a `factory-evidence` branch and linked from the evidence comment (run `scripts/post-evidence.sh` with a user token and it uses `gh pr comment --attach` instead).
 - **Gate** waits for every other check on the commit: CI, deploy previews, anything. If one fails, **ci-fix** reads the failed logs, fixes the cause and pushes (two attempts). When everything is green the gate merges, if the repository allows it, or labels the pull request `factory:ready` for a person.
+- **Sync** runs when the default branch moves, including right after the factory merges something. GitHub doesn't run pull request workflows on a conflicting pull request, so a factory pull request would otherwise stall when another one lands first. Sync merges the default branch into each conflicting factory pull request and has Claude resolve the conflicts so both changes survive, then the review starts again on the new commit. If it can't, the pull request gets `factory:needs-human`.
 - **Each station is a separate Claude Code run** with its own instructions (`stations/*.md`), tool allowlist, model, and turn limit. Stations pass work through files and comments, not a shared conversation.
 
 ## Trust model
@@ -89,7 +92,7 @@ Mention `@claude` in any issue or pull request comment for one-off questions and
 
 ### Use it in another repository
 
-The stations are reusable workflows. Copy the three files in [`templates/workflows/`](templates/workflows) into the other repository's `.github/workflows/`, then do the setup steps above there. They call this repository's `factory-issue.yml` and `factory-pr-run.yml` at `main` and read the station instructions from here, so improvements land everywhere at once. Pin `@main` to a commit SHA if you'd rather upgrade by hand.
+The stations are reusable workflows. Copy the four files in [`templates/workflows/`](templates/workflows) into the other repository's `.github/workflows/`, then do the setup steps above there. They call this repository's `factory-issue.yml`, `factory-pr-run.yml` and `factory-sync-run.yml` at `main` and read the station instructions from here, so improvements land everywhere at once. Pin `@main` to a commit SHA if you'd rather upgrade by hand.
 
 Inputs you can override in the caller: `reviewer_model`, `implementer_model`, `triage_model`, `max_reviews`, `max_ci_fixes`, `factory_ref`.
 
@@ -100,6 +103,7 @@ Inputs you can override in the caller: `reviewer_model`, `implementer_model`, `t
 - [x] Station 3: evidence. Configured checks, before and after screenshots, and a recorded video attached to the pull request
 - [x] Station 4: fix red CI on factory branches, and merge on green for repositories that opt in
 - [x] Reusable workflows any repository can call, a `factory:queued` label for phone intake, and a nightly sweep
+- [x] Sync: resolve conflicts when another pull request lands first
 - [ ] Intake from chat (Slack or Telegram) and a weekly report of what the factory shipped
 
 ## Credits

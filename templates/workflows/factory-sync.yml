@@ -1,0 +1,28 @@
+# Copy into .github/workflows/ of a repository that should use the factory.
+# See https://github.com/PranayHaldiya/software-factory#use-it-in-another-repository
+name: Factory sync
+
+# When the default branch moves, resolve conflicts in open factory pull requests
+# (factory-sync-run.yml). Pushes made with the Actions token don't trigger `push`, so after
+# the factory merges a pull request the gate starts this workflow with workflow_dispatch.
+# Run it by hand to check now.
+
+on:
+  push:
+    branches: [main] # your default branch
+  workflow_dispatch:
+
+concurrency:
+  group: factory-sync
+  cancel-in-progress: false
+
+jobs:
+  factory:
+    if: github.event_name == 'push' || github.actor == github.repository_owner || github.actor == 'github-actions[bot]'
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+    uses: PranayHaldiya/software-factory/.github/workflows/factory-sync-run.yml@main
+    secrets: inherit

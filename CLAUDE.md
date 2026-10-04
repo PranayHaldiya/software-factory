@@ -2,7 +2,7 @@
 
 A software factory on GitHub Actions and claude-code-action.
 
-- Workflows: `.github/workflows/`. `factory.yml`, `factory-pr.yml` and `factory-sweep.yml` are thin callers; the stations are in the reusable `factory-issue.yml` and `factory-pr-run.yml`.
+- Workflows: `.github/workflows/`. `factory.yml`, `factory-pr.yml`, `factory-sweep.yml` and `factory-sync.yml` are thin callers; the stations are in the reusable `factory-issue.yml`, `factory-pr-run.yml` and `factory-sync-run.yml`.
 - Station instructions: `stations/`. Helper scripts the stations' workflow steps run: `scripts/`.
 - `templates/workflows/` holds copies of the callers for other repositories. Keep them in sync with the callers here (only the `uses:` lines differ).
 - `site/` is a static demo page the evidence station screenshots.

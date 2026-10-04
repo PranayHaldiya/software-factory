@@ -363,7 +363,7 @@ jobs:
       issues: write
       checks: read
       statuses: read
-      actions: read
+      actions: write
     outputs:
       failed: ${{ steps.decide.outputs.failed }}
     steps:
@@ -411,6 +411,10 @@ jobs:
                 gh issue close "$issue" --repo "$GITHUB_REPOSITORY" --reason completed --comment "Done in #$PR." || true
                 gh issue edit "$issue" --repo "$GITHUB_REPOSITORY" --remove-label factory:pr-open 2>/dev/null || true
               done
+              # The merge used the Actions token, which doesn't trigger `push` workflows. Start the
+              # sync station so other factory pull requests that now conflict get resolved.
+              gh workflow run factory-sync.yml --repo "$GITHUB_REPOSITORY" 2>/dev/null ||
+                echo "No factory-sync.yml workflow in this repository; skipping the sync."
               exit 0
             fi
             echo "::warning::Merge failed; leaving the pull request for a person."
