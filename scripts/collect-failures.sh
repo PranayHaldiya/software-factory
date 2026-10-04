@@ -20,9 +20,9 @@ here="$(cd "$(dirname "$0")" && pwd)"
     | select(.status == "completed")
     | select(.conclusion as $c | ["success", "neutral", "skipped"] | index($c) | not)
     | select(.name | test("factory|^claude$"; "i") | not)
-    | "- \(.name): \(.conclusion) (\(.details_url))"'
+    | "- \(.name): \(.conclusion): \(.output.title // "") \(.output.summary // "" | .[0:500]) (\(.details_url))"'
   gh api "repos/$GITHUB_REPOSITORY/commits/$sha/status" --jq '
-    .statuses[] | select(.state == "failure" or .state == "error") | "- \(.context): \(.state) (\(.target_url))"'
+    .statuses[] | select(.state == "failure" or .state == "error") | "- \(.context): \(.state): \(.description // "") (\(.target_url // "no link"))"'
   echo
 
   for id in $(gh run list --repo "$GITHUB_REPOSITORY" --commit "$sha" --json databaseId,conclusion,workflowName \
