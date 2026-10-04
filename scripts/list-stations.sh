@@ -4,6 +4,10 @@
 set -euo pipefail
 
 for f in stations/*.md; do
+  [ -e "$f" ] || continue
   heading=$(grep -m 1 '^# ' "$f" | sed 's/^# //' || true)
-  [ -n "$heading" ] && printf '%s\t%s\n' "$(basename "$f")" "$heading" || printf '%s\t%s\n' "$(basename "$f")" "(no heading)"
+  if [ -z "$heading" ]; then
+    heading='(no heading)'
+  fi
+  printf '%s\t%s\n' "$(basename "$f")" "$heading"
 done
