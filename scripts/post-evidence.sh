@@ -48,7 +48,9 @@ mkdir -p "$media"
 } > "$body"
 
 files=()
-while IFS= read -r f; do files+=("$f"); done < <(cd "$media" && ls -1 ./*.png ./*.webm 2>/dev/null || true)
+for f in "$media"/*.png "$media"/*.webm; do
+  if [ -e "$f" ]; then files+=("./$(basename "$f")"); fi
+done
 
 if [ "${#files[@]}" -eq 0 ]; then
   gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file "$body"
